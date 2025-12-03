@@ -201,7 +201,7 @@ const App: React.FC = () => {
             <Card title="模型训练 (累积学习)">
               <div className="space-y-4">
                 <p className="text-sm text-gray-600">
-                  上传包含 <code>Target</code> 的 Excel/CSV 文件。系统将自动合并历史数据，重新训练随机森林模型(200棵树)，并更新评估指标。
+                  上传包含 <code>Target</code> 的 Excel/CSV 文件。系统将自动合并历史数据，重新训练随机森林模型，并更新评估指标。
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <input
