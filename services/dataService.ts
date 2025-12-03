@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { DataRow, ModelType, TrainingMetrics, RandomForestModel, FEATURES, TARGET } from '../types';
 import { STORAGE_KEYS, MODEL_CONFIGS } from '../constants';
 import { trainRandomForest, predictForest, calculateR2, calculateMAE } from './mlEngine';
+import { dbService } from './db';
 
 // --- Validation ---
 
@@ -18,30 +19,43 @@ export const validateColumns = (row: any, isTraining: boolean): string | null =>
   return null;
 };
 
-// --- Storage Helper ---
-const loadFromStorage = (key: string) => {
-  const stored = localStorage.getItem(key);
-  return stored ? JSON.parse(stored) : null;
-};
-
-const saveToStorage = (key: string, data: any) => {
-  localStorage.setItem(key, JSON.stringify(data));
-};
-
 // --- Operations ---
 
-export const getStoredMetrics = (modelType: ModelType): TrainingMetrics | null => {
-  const modelData = loadFromStorage(STORAGE_KEYS.MODEL(modelType));
+export const getStoredMetrics = async (modelType: ModelType): Promise<TrainingMetrics | null> => {
+  const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType));
   return modelData ? modelData.metrics : null;
 };
 
-export const clearModelData = (modelType: ModelType) => {
-  localStorage.removeItem(STORAGE_KEYS.DATA(modelType));
-  localStorage.removeItem(STORAGE_KEYS.MODEL(modelType));
+export const clearModelData = async (modelType: ModelType) => {
+  // We use the storage keys to clear both model and data entries
+  await dbService.clearAll(STORAGE_KEYS.MODEL(modelType)); // Clears model store entry
+  await dbService.saveData(STORAGE_KEYS.DATA(modelType), []); // Reset data to empty or delete
+  
+  // Actually, let's delete strictly from both stores using the specific keys
+  // Note: STORAGE_KEYS helpers return strings. 
+  // In db.ts clearAll takes a 'key' and deletes from both stores using that key. 
+  // But our keys are different: "TRAIN_DATA_..." vs "SAVED_MODEL_..."
+  
+  // Let's just do it manually here to be safe with the specific keys
+  // The dbService.clearAll logic in the previous file assumed one key for both, but we have different keys.
+  // We will just use saveModel/saveData with null or implement specific deletes.
+  // However, `dbService` has a clearAll that takes ONE key. Let's fix usage:
+  
+  // Correct approach using the exposed methods:
+  // We need to delete from the 'models' store with MODEL key
+  // And 'datasets' store with DATA key.
+  
+  // Since dbService.clearAll in db.ts tries to delete the SAME key from both stores, 
+  // and we use different keys (SAVED_MODEL_X vs TRAIN_DATA_X), we should not use that clearAll for this specific structure
+  // unless we align keys or just overwrite with null/empty.
+  
+  // Let's just overwrite with null/empty array which is effectively clearing for our logic
+  await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), null);
+  await dbService.saveData(STORAGE_KEYS.DATA(modelType), []);
 };
 
-export const downloadTrainingData = (modelType: ModelType) => {
-  const data: DataRow[] = loadFromStorage(STORAGE_KEYS.DATA(modelType));
+export const downloadTrainingData = async (modelType: ModelType) => {
+  const data: DataRow[] = await dbService.getData(STORAGE_KEYS.DATA(modelType));
   if (!data || data.length === 0) {
     throw new Error("当前模型暂无累积训练数据");
   }
@@ -69,11 +83,10 @@ export const generatePredictionTemplate = () => {
   XLSX.writeFile(wb, "predict_template.xlsx");
 };
 
-export const downloadSummary = (modelType: ModelType) => {
-  const metrics = getStoredMetrics(modelType);
+export const downloadSummary = async (modelType: ModelType) => {
+  const metrics = await getStoredMetrics(modelType);
   if (!metrics) {
-    alert("该模型暂无训练数据");
-    return;
+    throw new Error("该模型暂无训练数据");
   }
   
   const content = {
@@ -110,14 +123,17 @@ export const handleTrain = async (
   if (error) throw new Error(error);
 
   // 3. Accumulate Data
-  onProgress("正在合并历史数据...");
-  const oldData: DataRow[] = loadFromStorage(STORAGE_KEYS.DATA(modelType)) || [];
+  onProgress("正在从数据库读取历史数据...");
+  const oldData: DataRow[] = (await dbService.getData(STORAGE_KEYS.DATA(modelType))) || [];
   
   // Simple merge
   const mergedData = [...oldData, ...data];
   
   // 4. Train
   onProgress(`正在训练 (样本量: ${mergedData.length}, 树: 200)...`);
+  // Small delay to allow UI render
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
   const { trees } = await trainRandomForest(mergedData);
   
   // 5. Evaluate
@@ -141,10 +157,10 @@ export const handleTrain = async (
     metrics
   };
 
-  // 6. Save
-  onProgress("保存模型中...");
-  saveToStorage(STORAGE_KEYS.DATA(modelType), mergedData);
-  saveToStorage(STORAGE_KEYS.MODEL(modelType), modelPayload);
+  // 6. Save to IndexedDB
+  onProgress("保存模型到数据库...");
+  await dbService.saveData(STORAGE_KEYS.DATA(modelType), mergedData);
+  await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), modelPayload);
 
   return metrics;
 };
@@ -154,8 +170,9 @@ export const handlePredict = async (
   modelType: ModelType,
   onProgress: (msg: string) => void
 ): Promise<DataRow[]> => {
-  // 1. Load Model
-  const modelData = loadFromStorage(STORAGE_KEYS.MODEL(modelType)) as RandomForestModel;
+  // 1. Load Model from IndexedDB
+  onProgress("正在加载模型...");
+  const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType)) as RandomForestModel;
   if (!modelData) throw new Error("该模型尚未训练，请先训练模型。");
 
   // 2. Read File

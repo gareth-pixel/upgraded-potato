@@ -10,6 +10,7 @@ const App: React.FC = () => {
   const [currentModel, setCurrentModel] = useState<ModelType>(ModelType.ONLINE);
   const [metrics, setMetrics] = useState<TrainingMetrics | null>(null);
   const [status, setStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error', msg: string }>({ type: 'idle', msg: '' });
+  const [isInitializing, setIsInitializing] = useState(true);
   
   // Prediction Preview State
   const [previewData, setPreviewData] = useState<DataRow[] | null>(null);
@@ -21,11 +22,21 @@ const App: React.FC = () => {
 
   // Load metrics on model switch and clear preview
   useEffect(() => {
-    const m = getStoredMetrics(currentModel);
-    setMetrics(m);
-    setStatus({ type: 'idle', msg: '' });
-    setPreviewData(null);
-    setPredictFileName("");
+    const loadMetrics = async () => {
+      setIsInitializing(true);
+      setPreviewData(null);
+      setPredictFileName("");
+      setStatus({ type: 'idle', msg: '' });
+      try {
+        const m = await getStoredMetrics(currentModel);
+        setMetrics(m);
+      } catch (e) {
+        console.error("Failed to load metrics", e);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+    loadMetrics();
   }, [currentModel]);
 
   const onTrainFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -36,7 +47,7 @@ const App: React.FC = () => {
       setStatus({ type: 'loading', msg: '初始化训练...' });
       const newMetrics = await handleTrain(file, currentModel, (msg) => setStatus({ type: 'loading', msg }));
       setMetrics(newMetrics);
-      setStatus({ type: 'success', msg: '训练完成！模型已更新。' });
+      setStatus({ type: 'success', msg: '训练完成！模型已更新并保存至本地数据库。' });
       setPreviewData(null); // Clear any prediction preview
     } catch (err: any) {
       console.error(err);
@@ -46,12 +57,13 @@ const App: React.FC = () => {
     }
   };
 
-  const handleClearData = () => {
+  const handleClearData = async () => {
     if (!window.confirm(`⚠️ 警告：确定要清空【${MODEL_CONFIGS[currentModel].name}】的所有训练数据和模型吗？此操作不可恢复。`)) {
       return;
     }
     try {
-      clearModelData(currentModel);
+      setStatus({ type: 'loading', msg: '正在清空数据...' });
+      await clearModelData(currentModel);
       setMetrics(null);
       setStatus({ type: 'success', msg: '模型及训练数据已清空。' });
     } catch (err: any) {
@@ -59,13 +71,22 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadTrainData = () => {
+  const handleDownloadTrainData = async () => {
      try {
-       downloadTrainingData(currentModel);
+       setStatus({ type: 'loading', msg: '正在准备下载...' });
+       await downloadTrainingData(currentModel);
        setStatus({ type: 'success', msg: '累积训练数据下载成功。' });
      } catch (err: any) {
        setStatus({ type: 'error', msg: err.message });
      }
+  };
+  
+  const handleDownloadSummary = async () => {
+    try {
+      await downloadSummary(currentModel);
+    } catch (err: any) {
+      alert(err.message);
+    }
   };
 
   const onPredictFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -167,7 +188,11 @@ const App: React.FC = () => {
           {/* Left Column: Metrics */}
           <div className="lg:col-span-1 space-y-6">
             <Card title="模型状态">
-              {metrics ? (
+              {isInitializing ? (
+                <div className="py-12 flex justify-center">
+                  <Activity className="h-8 w-8 text-brand-300 animate-spin" />
+                </div>
+              ) : metrics ? (
                 <div className="space-y-6">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -189,7 +214,7 @@ const App: React.FC = () => {
                   <Button 
                     variant="secondary" 
                     className="w-full" 
-                    onClick={() => downloadSummary(currentModel)}
+                    onClick={handleDownloadSummary}
                     icon={<Download size={16} />}
                   >
                     下载训练摘要
@@ -236,6 +261,7 @@ const App: React.FC = () => {
                   <Button 
                     onClick={() => trainInputRef.current?.click()} 
                     isLoading={status.type === 'loading'}
+                    disabled={isInitializing}
                     icon={<Upload size={18} />}
                   >
                     上传训练数据
@@ -258,7 +284,7 @@ const App: React.FC = () => {
                       variant="secondary"
                       size="sm"
                       onClick={handleDownloadTrainData}
-                      disabled={!metrics}
+                      disabled={!metrics || isInitializing}
                       icon={<Database size={14}/>}
                       title="下载当前模型累积的所有训练数据"
                     >
@@ -269,7 +295,7 @@ const App: React.FC = () => {
                     variant="danger"
                     size="sm"
                     onClick={handleClearData}
-                    disabled={!metrics}
+                    disabled={!metrics || isInitializing}
                     icon={<Trash2 size={14}/>}
                     className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
                   >
@@ -297,7 +323,7 @@ const App: React.FC = () => {
                     className="bg-purple-600 hover:bg-purple-700 focus:ring-purple-500"
                     onClick={() => predictInputRef.current?.click()}
                     isLoading={status.type === 'loading'}
-                    disabled={!metrics}
+                    disabled={!metrics || isInitializing}
                     icon={<Activity size={18} />}
                   >
                     上传预测数据
