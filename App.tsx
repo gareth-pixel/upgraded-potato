@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save } from 'lucide-react';
+import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save, Trash2, Database } from 'lucide-react';
 import { ModelType, TrainingMetrics, DataRow, FEATURES } from './types';
 import { MODEL_CONFIGS } from './constants';
-import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults } from './services/dataService';
+import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults, clearModelData, downloadTrainingData } from './services/dataService';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 
@@ -44,6 +44,28 @@ const App: React.FC = () => {
     } finally {
       if (trainInputRef.current) trainInputRef.current.value = '';
     }
+  };
+
+  const handleClearData = () => {
+    if (!window.confirm(`⚠️ 警告：确定要清空【${MODEL_CONFIGS[currentModel].name}】的所有训练数据和模型吗？此操作不可恢复。`)) {
+      return;
+    }
+    try {
+      clearModelData(currentModel);
+      setMetrics(null);
+      setStatus({ type: 'success', msg: '模型及训练数据已清空。' });
+    } catch (err: any) {
+      setStatus({ type: 'error', msg: '清空失败: ' + err.message });
+    }
+  };
+
+  const handleDownloadTrainData = () => {
+     try {
+       downloadTrainingData(currentModel);
+       setStatus({ type: 'success', msg: '累积训练数据下载成功。' });
+     } catch (err: any) {
+       setStatus({ type: 'error', msg: err.message });
+     }
   };
 
   const onPredictFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -201,7 +223,7 @@ const App: React.FC = () => {
             <Card title="模型训练 (累积学习)">
               <div className="space-y-4">
                 <p className="text-sm text-gray-600">
-                  上传包含 <code>Target</code> 的 Excel/CSV 文件。系统将自动合并历史数据，重新训练随机森林模型，并更新评估指标。
+                  上传包含 <code>Target</code> 的 Excel/CSV 文件。系统将自动合并历史数据，重新训练随机森林模型(200棵树)，并更新评估指标。
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <input
@@ -225,6 +247,33 @@ const App: React.FC = () => {
                     icon={<FileSpreadsheet size={16}/>}
                   >
                     下载训练模板
+                  </Button>
+                </div>
+                
+                {/* Data Management Section */}
+                <div className="pt-4 border-t border-gray-100 mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                     <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">当前数据:</span>
+                     <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleDownloadTrainData}
+                      disabled={!metrics}
+                      icon={<Database size={14}/>}
+                      title="下载当前模型累积的所有训练数据"
+                    >
+                      下载累积数据
+                    </Button>
+                  </div>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleClearData}
+                    disabled={!metrics}
+                    icon={<Trash2 size={14}/>}
+                    className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+                  >
+                    清空数据
                   </Button>
                 </div>
               </div>

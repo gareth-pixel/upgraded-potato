@@ -35,6 +35,24 @@ export const getStoredMetrics = (modelType: ModelType): TrainingMetrics | null =
   return modelData ? modelData.metrics : null;
 };
 
+export const clearModelData = (modelType: ModelType) => {
+  localStorage.removeItem(STORAGE_KEYS.DATA(modelType));
+  localStorage.removeItem(STORAGE_KEYS.MODEL(modelType));
+};
+
+export const downloadTrainingData = (modelType: ModelType) => {
+  const data: DataRow[] = loadFromStorage(STORAGE_KEYS.DATA(modelType));
+  if (!data || data.length === 0) {
+    throw new Error("当前模型暂无累积训练数据");
+  }
+  
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "TrainingData");
+  
+  XLSX.writeFile(wb, MODEL_CONFIGS[modelType].trainFile);
+};
+
 export const generateTrainTemplate = () => {
   const headers = [...FEATURES, TARGET];
   const ws = XLSX.utils.aoa_to_sheet([headers]);
