@@ -171,7 +171,7 @@ const App: React.FC = () => {
       const remoteJson = await fetchFromGitHub(ghConfig);
       
       if (!remoteJson) {
-         throw new Error("远程文件不存在");
+         throw new Error("远程文件为空或不存在 (如果这是第一次使用，请先训练并发布)");
       }
 
       setStatus({ type: 'loading', msg: '正在恢复模型与数据...' });
