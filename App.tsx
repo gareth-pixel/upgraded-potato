@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save, Trash2, Database } from 'lucide-react';
+import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save, Trash2, Database, Github, Settings, CloudUpload } from 'lucide-react';
 import { ModelType, TrainingMetrics, DataRow, FEATURES } from './types';
 import { MODEL_CONFIGS } from './constants';
-import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults, clearModelData, downloadTrainingData } from './services/dataService';
+import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults, clearModelData, downloadTrainingData, getModelExportData } from './services/dataService';
+import { getGitHubConfig, saveGitHubConfig, uploadToGitHub, GitHubConfig } from './services/github';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 
@@ -15,6 +17,10 @@ const App: React.FC = () => {
   // Prediction Preview State
   const [previewData, setPreviewData] = useState<DataRow[] | null>(null);
   const [predictFileName, setPredictFileName] = useState<string>("");
+
+  // GitHub Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [ghConfig, setGhConfig] = useState<GitHubConfig>({ token: '', owner: '', repo: '', path: 'public/data/model_result.json' });
 
   // File inputs refs
   const trainInputRef = useRef<HTMLInputElement>(null);
@@ -38,6 +44,12 @@ const App: React.FC = () => {
     };
     loadMetrics();
   }, [currentModel]);
+
+  // Load Settings on Mount
+  useEffect(() => {
+    const saved = getGitHubConfig();
+    if (saved) setGhConfig(saved);
+  }, []);
 
   const onTrainFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -118,6 +130,38 @@ const App: React.FC = () => {
     }
   };
 
+  const handlePublishToGitHub = async () => {
+    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
+      setShowSettings(true);
+      setStatus({ type: 'error', msg: '请先配置 GitHub 设置' });
+      return;
+    }
+
+    if (!window.confirm(`确定要将当前【${MODEL_CONFIGS[currentModel].name}】发布到 GitHub 吗？这将会覆盖远程仓库中的数据。`)) {
+      return;
+    }
+
+    try {
+      setStatus({ type: 'loading', msg: '正在准备上传数据...' });
+      const data = await getModelExportData(currentModel);
+      if (!data) throw new Error("无法读取本地模型数据");
+
+      setStatus({ type: 'loading', msg: '正在连接 GitHub...' });
+      await uploadToGitHub(ghConfig, data, `Update ${MODEL_CONFIGS[currentModel].name} model via Web App`);
+
+      setStatus({ type: 'success', msg: `发布成功！GitHub 仓库 ${ghConfig.path} 已更新。` });
+    } catch (err: any) {
+      setStatus({ type: 'error', msg: '发布失败: ' + err.message });
+    }
+  };
+
+  const saveSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveGitHubConfig(ghConfig);
+    setShowSettings(false);
+    setStatus({ type: 'success', msg: 'GitHub 设置已保存' });
+  };
+
   const clearPreview = () => {
     setPreviewData(null);
     setPredictFileName("");
@@ -138,8 +182,83 @@ const App: React.FC = () => {
               <p className="text-xs text-gray-500">Collection Volume Prediction System</p>
             </div>
           </div>
+          <button 
+            onClick={() => setShowSettings(!showSettings)}
+            className="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-100 transition-colors"
+            title="GitHub Settings"
+          >
+            <Settings size={20} />
+          </button>
         </div>
       </header>
+
+      {/* GitHub Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Github size={20} /> GitHub 配置
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={saveSettings} className="space-y-4">
+               <div>
+                <label className="block text-sm font-medium text-gray-700">Repo Owner (用户名/组织名)</label>
+                <input 
+                  type="text" 
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm p-2 border"
+                  placeholder="e.g. your-username"
+                  value={ghConfig.owner}
+                  onChange={e => setGhConfig({...ghConfig, owner: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Repository Name (仓库名)</label>
+                <input 
+                  type="text" 
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm p-2 border"
+                  placeholder="e.g. my-project-repo"
+                  value={ghConfig.repo}
+                  onChange={e => setGhConfig({...ghConfig, repo: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">File Path (保存路径)</label>
+                <input 
+                  type="text" 
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm p-2 border"
+                  value={ghConfig.path}
+                  onChange={e => setGhConfig({...ghConfig, path: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Personal Access Token (PAT)</label>
+                <input 
+                  type="password" 
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm p-2 border"
+                  placeholder="github_pat_..."
+                  value={ghConfig.token}
+                  onChange={e => setGhConfig({...ghConfig, token: e.target.value})}
+                />
+                <p className="mt-1 text-xs text-red-500">
+                  注意：Token 仅保存在本地浏览器中。请勿在公共设备上使用。需要 Repo 读写权限。
+                </p>
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowSettings(false)}>取消</Button>
+                <Button type="submit" variant="primary" size="sm">保存配置</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
@@ -279,7 +398,7 @@ const App: React.FC = () => {
                 {/* Data Management Section */}
                 <div className="pt-4 border-t border-gray-100 mt-4 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                     <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">当前数据:</span>
+                     <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">数据管理:</span>
                      <Button
                       variant="secondary"
                       size="sm"
@@ -289,6 +408,17 @@ const App: React.FC = () => {
                       title="下载当前模型累积的所有训练数据"
                     >
                       下载累积数据
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handlePublishToGitHub}
+                      disabled={!metrics || isInitializing}
+                      icon={<CloudUpload size={14}/>}
+                      title="将训练结果上传到 GitHub"
+                      className="bg-gray-800 hover:bg-gray-900"
+                    >
+                      发布到云端
                     </Button>
                   </div>
                   <Button

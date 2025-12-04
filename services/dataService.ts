@@ -1,3 +1,4 @@
+
 import * as XLSX from 'xlsx';
 import { DataRow, ModelType, TrainingMetrics, RandomForestModel, FEATURES, TARGET } from '../types';
 import { STORAGE_KEYS, MODEL_CONFIGS } from '../constants';
@@ -27,29 +28,6 @@ export const getStoredMetrics = async (modelType: ModelType): Promise<TrainingMe
 };
 
 export const clearModelData = async (modelType: ModelType) => {
-  // We use the storage keys to clear both model and data entries
-  await dbService.clearAll(STORAGE_KEYS.MODEL(modelType)); // Clears model store entry
-  await dbService.saveData(STORAGE_KEYS.DATA(modelType), []); // Reset data to empty or delete
-  
-  // Actually, let's delete strictly from both stores using the specific keys
-  // Note: STORAGE_KEYS helpers return strings. 
-  // In db.ts clearAll takes a 'key' and deletes from both stores using that key. 
-  // But our keys are different: "TRAIN_DATA_..." vs "SAVED_MODEL_..."
-  
-  // Let's just do it manually here to be safe with the specific keys
-  // The dbService.clearAll logic in the previous file assumed one key for both, but we have different keys.
-  // We will just use saveModel/saveData with null or implement specific deletes.
-  // However, `dbService` has a clearAll that takes ONE key. Let's fix usage:
-  
-  // Correct approach using the exposed methods:
-  // We need to delete from the 'models' store with MODEL key
-  // And 'datasets' store with DATA key.
-  
-  // Since dbService.clearAll in db.ts tries to delete the SAME key from both stores, 
-  // and we use different keys (SAVED_MODEL_X vs TRAIN_DATA_X), we should not use that clearAll for this specific structure
-  // unless we align keys or just overwrite with null/empty.
-  
-  // Let's just overwrite with null/empty array which is effectively clearing for our logic
   await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), null);
   await dbService.saveData(STORAGE_KEYS.DATA(modelType), []);
 };
@@ -217,6 +195,17 @@ export const exportPredictionResults = (
   const fileName = `${originalName}_${modelSuffix}_predicted.xlsx`;
   
   XLSX.writeFile(wb, fileName);
+};
+
+// Helper to get raw model data for export to GitHub
+export const getModelExportData = async (modelType: ModelType) => {
+  const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType));
+  if (!modelData) return null;
+  
+  // We wrap it in a key that matches the model type for the JSON file
+  return {
+    [modelType]: modelData
+  };
 };
 
 const readFile = (file: File): Promise<DataRow[]> => {
