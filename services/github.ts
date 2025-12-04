@@ -1,4 +1,5 @@
 
+
 export interface GitHubConfig {
   token: string;
   owner: string;
@@ -24,6 +25,34 @@ const utf8_to_b64 = (str: string): string => {
 
 const b64_to_utf8 = (str: string): string => {
   return decodeURIComponent(escape(window.atob(str)));
+};
+
+export const fetchFromGitHub = async (config: GitHubConfig) => {
+  const { token, owner, repo, path } = config;
+  // Cache bust
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?t=${new Date().getTime()}`;
+  
+  const headers: any = {
+    'Accept': 'application/vnd.github.v3+json',
+  };
+  
+  // If token is present, use it. Public repos might work without it for GET, 
+  // but better to use if available for rate limits.
+  if (token) {
+    headers['Authorization'] = `token ${token}`;
+  }
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    if (res.status === 404) return null; // File doesn't exist yet
+    throw new Error(`GitHub Fetch Error: ${res.status} ${res.statusText}`);
+  }
+  
+  const data = await res.json();
+  // GitHub API returns content in base64 with newlines
+  const content = data.content.replace(/\n/g, '');
+  const jsonStr = b64_to_utf8(content);
+  return JSON.parse(jsonStr);
 };
 
 export const uploadToGitHub = async (

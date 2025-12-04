@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save, Trash2, Database, Github, Settings, CloudUpload } from 'lucide-react';
+import { Download, Upload, BarChart2, FileSpreadsheet, Activity, AlertCircle, CheckCircle, X, Save, Trash2, Database, Github, Settings, CloudUpload, CloudDownload } from 'lucide-react';
 import { ModelType, TrainingMetrics, DataRow, FEATURES } from './types';
 import { MODEL_CONFIGS } from './constants';
-import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults, clearModelData, downloadTrainingData, getModelExportData } from './services/dataService';
-import { getGitHubConfig, saveGitHubConfig, uploadToGitHub, GitHubConfig } from './services/github';
+import { getStoredMetrics, generateTrainTemplate, generatePredictionTemplate, downloadSummary, handleTrain, handlePredict, exportPredictionResults, clearModelData, downloadTrainingData, getModelExportData, restoreModelFromRemote } from './services/dataService';
+import { getGitHubConfig, saveGitHubConfig, uploadToGitHub, fetchFromGitHub, GitHubConfig } from './services/github';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 
@@ -147,11 +147,45 @@ const App: React.FC = () => {
       if (!data) throw new Error("无法读取本地模型数据");
 
       setStatus({ type: 'loading', msg: '正在连接 GitHub...' });
-      await uploadToGitHub(ghConfig, data, `Update ${MODEL_CONFIGS[currentModel].name} model via Web App`);
+      await uploadToGitHub(ghConfig, data, `Update ${MODEL_CONFIGS[currentModel].name} model and data`);
 
       setStatus({ type: 'success', msg: `发布成功！GitHub 仓库 ${ghConfig.path} 已更新。` });
     } catch (err: any) {
       setStatus({ type: 'error', msg: '发布失败: ' + err.message });
+    }
+  };
+
+  const handleCloudPretrain = async () => {
+    if (!ghConfig.owner || !ghConfig.repo) {
+      setShowSettings(true);
+      setStatus({ type: 'error', msg: '请先配置 GitHub 仓库信息' });
+      return;
+    }
+
+    if (!window.confirm(`确定要从 GitHub 加载【${MODEL_CONFIGS[currentModel].name}】的云端数据吗？这将覆盖本地的当前模型。`)) {
+      return;
+    }
+
+    try {
+      setStatus({ type: 'loading', msg: '正在从 GitHub 获取数据...' });
+      const remoteJson = await fetchFromGitHub(ghConfig);
+      
+      if (!remoteJson) {
+         throw new Error("远程文件不存在");
+      }
+
+      setStatus({ type: 'loading', msg: '正在恢复模型与数据...' });
+      const newMetrics = await restoreModelFromRemote(currentModel, remoteJson, (msg) => setStatus({ type: 'loading', msg }));
+      
+      if (newMetrics) {
+        setMetrics(newMetrics);
+        setStatus({ type: 'success', msg: '云端预训练完成！模型及数据已同步。' });
+      } else {
+        setStatus({ type: 'error', msg: '远程文件中未找到该模型的数据。' });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setStatus({ type: 'error', msg: '预训练失败: ' + err.message });
     }
   };
 
@@ -241,14 +275,13 @@ const App: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700">Personal Access Token (PAT)</label>
                 <input 
                   type="password" 
-                  required
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm p-2 border"
-                  placeholder="github_pat_..."
+                  placeholder="github_pat_... (选填，公开仓库下载无需)"
                   value={ghConfig.token}
                   onChange={e => setGhConfig({...ghConfig, token: e.target.value})}
                 />
                 <p className="mt-1 text-xs text-red-500">
-                  注意：Token 仅保存在本地浏览器中。请勿在公共设备上使用。需要 Repo 读写权限。
+                  注意：Token 仅保存在本地浏览器中。如仓库是公开的，下载无需 Token，但上传(发布)必须填写。
                 </p>
               </div>
               <div className="flex justify-end gap-3 pt-2">
@@ -345,7 +378,7 @@ const App: React.FC = () => {
                     <BarChart2 className="text-gray-400" />
                   </div>
                   <p className="text-gray-500">该模型尚未训练</p>
-                  <p className="text-xs text-gray-400 mt-1">请上传数据进行首次训练</p>
+                  <p className="text-xs text-gray-400 mt-1">请上传数据或从云端加载</p>
                 </div>
               )}
             </Card>
@@ -386,6 +419,15 @@ const App: React.FC = () => {
                     上传训练数据
                   </Button>
                   <Button 
+                     onClick={handleCloudPretrain}
+                     disabled={isInitializing}
+                     variant="secondary"
+                     icon={<CloudDownload size={18} />}
+                     title="从云端加载数据并恢复/训练模型"
+                  >
+                    云端预训练
+                  </Button>
+                  <Button 
                     variant="outline" 
                     size="md" 
                     onClick={generateTrainTemplate} 
@@ -415,7 +457,7 @@ const App: React.FC = () => {
                       onClick={handlePublishToGitHub}
                       disabled={!metrics || isInitializing}
                       icon={<CloudUpload size={14}/>}
-                      title="将训练结果上传到 GitHub"
+                      title="将训练结果及数据上传到 GitHub"
                       className="bg-gray-800 hover:bg-gray-900"
                     >
                       发布到云端

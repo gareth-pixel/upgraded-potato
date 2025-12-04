@@ -85,6 +85,51 @@ export const downloadSummary = async (modelType: ModelType) => {
   document.body.removeChild(link);
 };
 
+/**
+ * Core logic to train model from a dataset
+ */
+export const trainFromData = async (
+  data: DataRow[],
+  modelType: ModelType,
+  onProgress?: (msg: string) => void
+): Promise<TrainingMetrics> => {
+  if (data.length === 0) throw new Error("训练数据为空");
+
+  onProgress?.(`正在训练 (样本量: ${data.length}, 树: 200)...`);
+  // Small delay to allow UI render
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  const { trees } = await trainRandomForest(data);
+  
+  // Evaluate
+  onProgress?.("正在评估模型...");
+  const yTrue = data.map(r => Number(r[TARGET]));
+  const predictions = data.map(r => predictForest(trees, r).mean);
+  
+  const r2 = calculateR2(yTrue, predictions);
+  const mae = calculateMAE(yTrue, predictions);
+  
+  const metrics: TrainingMetrics = {
+    r2,
+    mae,
+    sampleSize: data.length,
+    lastUpdated: new Date().toLocaleString()
+  };
+
+  const modelPayload: RandomForestModel = {
+    type: modelType,
+    trees,
+    metrics
+  };
+
+  // Save to IndexedDB
+  onProgress?.("保存模型到数据库...");
+  await dbService.saveData(STORAGE_KEYS.DATA(modelType), data);
+  await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), modelPayload);
+
+  return metrics;
+};
+
 export const handleTrain = async (
   file: File, 
   modelType: ModelType,
@@ -108,39 +153,7 @@ export const handleTrain = async (
   const mergedData = [...oldData, ...data];
   
   // 4. Train
-  onProgress(`正在训练 (样本量: ${mergedData.length}, 树: 200)...`);
-  // Small delay to allow UI render
-  await new Promise(resolve => setTimeout(resolve, 50));
-  
-  const { trees } = await trainRandomForest(mergedData);
-  
-  // 5. Evaluate
-  onProgress("正在评估模型...");
-  const yTrue = mergedData.map(r => Number(r[TARGET]));
-  const predictions = mergedData.map(r => predictForest(trees, r).mean);
-  
-  const r2 = calculateR2(yTrue, predictions);
-  const mae = calculateMAE(yTrue, predictions);
-  
-  const metrics: TrainingMetrics = {
-    r2,
-    mae,
-    sampleSize: mergedData.length,
-    lastUpdated: new Date().toLocaleString()
-  };
-
-  const modelPayload: RandomForestModel = {
-    type: modelType,
-    trees,
-    metrics
-  };
-
-  // 6. Save to IndexedDB
-  onProgress("保存模型到数据库...");
-  await dbService.saveData(STORAGE_KEYS.DATA(modelType), mergedData);
-  await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), modelPayload);
-
-  return metrics;
+  return await trainFromData(mergedData, modelType, onProgress);
 };
 
 export const handlePredict = async (
@@ -200,12 +213,70 @@ export const exportPredictionResults = (
 // Helper to get raw model data for export to GitHub
 export const getModelExportData = async (modelType: ModelType) => {
   const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType));
-  if (!modelData) return null;
+  const dataset = await dbService.getData(STORAGE_KEYS.DATA(modelType));
+
+  if (!modelData && (!dataset || dataset.length === 0)) return null;
   
   // We wrap it in a key that matches the model type for the JSON file
+  // Structure: { [modelType]: { model, data } }
   return {
-    [modelType]: modelData
+    [modelType]: {
+      model: modelData,
+      data: dataset || []
+    }
   };
+};
+
+/**
+ * Restores model and data from a remote JSON object (fetched from GitHub).
+ * If the remote object has data but no model, it will trigger training.
+ */
+export const restoreModelFromRemote = async (
+  modelType: ModelType, 
+  remoteData: any,
+  onProgress: (msg: string) => void
+): Promise<TrainingMetrics | null> => {
+  
+  const targetData = remoteData[modelType];
+  if (!targetData) {
+    // If not found, maybe it's the old format where the root object was the model?
+    // unlikely given the key structure, but let's be strict.
+    return null;
+  }
+
+  onProgress("正在解析云端数据...");
+  
+  let model: RandomForestModel | null = null;
+  let data: DataRow[] = [];
+
+  // Check structure
+  if (targetData.model || targetData.data) {
+    // New format
+    model = targetData.model;
+    data = targetData.data || [];
+  } else if (targetData.trees) {
+    // Old format (only model)
+    model = targetData;
+    // No data in old format
+  }
+
+  // 1. Save Data
+  if (data.length > 0) {
+    onProgress(`恢复训练数据 (${data.length} 条)...`);
+    await dbService.saveData(STORAGE_KEYS.DATA(modelType), data);
+  }
+
+  // 2. Save Model or Retrain
+  if (model) {
+    onProgress("恢复模型参数...");
+    await dbService.saveModel(STORAGE_KEYS.MODEL(modelType), model);
+    return model.metrics;
+  } else if (data.length > 0) {
+    onProgress("未发现预训练模型，正在使用云端数据进行训练...");
+    return await trainFromData(data, modelType, onProgress);
+  }
+
+  return null;
 };
 
 const readFile = (file: File): Promise<DataRow[]> => {
