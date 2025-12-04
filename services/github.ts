@@ -74,7 +74,7 @@ export const uploadToGitHub = async (
   message: string
 ) => {
   const { token, owner, repo, path } = config;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const baseUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   
   // Headers for metadata request (to get SHA)
   const metaHeaders: any = {
@@ -84,41 +84,61 @@ export const uploadToGitHub = async (
 
   try {
     // 1. Get existing file metadata (SHA)
+    // Add cache bust to metadata request too
+    const metaUrl = `${baseUrl}?t=${new Date().getTime()}`;
     let sha: string | undefined;
-    let existingContent = {};
+    let existingContent: any = {};
 
-    const getRes = await fetch(url, { headers: metaHeaders });
+    const getRes = await fetch(metaUrl, { headers: metaHeaders });
     
     if (getRes.status === 200) {
       const data = await getRes.json();
       sha = data.sha;
       
       // 2. Fetch actual content
-      // If file is > 1MB, data.content is undefined in the metadata response.
-      // We must fetch raw content to ensure we have the existing data for other models.
-      // (Re-using our robust fetch logic, but we already have the URL)
-      const rawRes = await fetch(url, {
+      // STRICT CHECK: If we found the file (SHA exists), we MUST successfully read it 
+      // before writing back. Otherwise we risk overwriting existing data (from other models) 
+      // with an empty object if the fetch fails.
+      
+      const rawUrl = `${baseUrl}?t=${new Date().getTime()}`; // Cache bust raw content
+      const rawRes = await fetch(rawUrl, {
         headers: {
           'Authorization': `token ${token}`,
           'Accept': 'application/vnd.github.v3.raw'
         }
       });
       
-      if (rawRes.ok) {
-        const rawText = await rawRes.text();
-        if (rawText && rawText.trim() !== '') {
-          try {
-            existingContent = JSON.parse(rawText);
-          } catch (e) {
-            console.warn("Existing cloud file invalid JSON, will overwrite.", e);
+      if (!rawRes.ok) {
+        // ABORT: Cannot read existing file
+        throw new Error(`Critical: Remote file exists (SHA: ${sha}) but content download failed (${rawRes.status}). Aborting upload to prevent data loss.`);
+      }
+
+      const rawText = await rawRes.text();
+      if (rawText && rawText.trim() !== '') {
+        try {
+          existingContent = JSON.parse(rawText);
+          
+          // Basic validation
+          if (typeof existingContent !== 'object' || existingContent === null) {
+             throw new Error("Remote content is not a JSON object");
           }
+        } catch (e: any) {
+          // ABORT: Cannot parse existing file
+          console.error("Existing cloud file invalid JSON:", e);
+          throw new Error(`Critical: Existing cloud file is invalid JSON. Aborting to prevent data corruption. Error: ${e.message}`);
         }
       }
-    } else if (getRes.status !== 404) {
+    } else if (getRes.status === 404) {
+      // File doesn't exist yet, safe to create new
+      existingContent = {};
+    } else if (getRes.status === 403) {
+      throw new Error("GitHub API permission denied. Check your token scopes.");
+    } else {
       throw new Error(`GitHub API Error (Get Metadata): ${getRes.statusText}`);
     }
 
     // 3. Merge new content with existing
+    // This ensures we only update the key for the current model, preserving others
     const finalContent = {
       ...existingContent,
       ...newContentObj
@@ -135,7 +155,7 @@ export const uploadToGitHub = async (
       sha, // Required if updating existing file
     };
 
-    const putRes = await fetch(url, {
+    const putRes = await fetch(baseUrl, {
       method: 'PUT',
       headers: {
         'Authorization': `token ${token}`,
