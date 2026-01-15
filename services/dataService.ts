@@ -196,9 +196,9 @@ export const handlePredict = async (
     const preds = predictLinearModel(modelData.weights, modelData.bias, modelData.residualStd, row);
     const days = getSafeDays(row);
     const calibration = modelData.calibrationFactor ?? 1;
-    const predictedTotal = preds.mean * days * calibration;
-    const predictedLower = preds.lowerBound * days * calibration;
-    const predictedUpper = preds.upperBound * days * calibration;
+    const predictedTotal = Math.max(0, preds.mean * days * calibration);
+    const predictedLower = Math.max(0, preds.lowerBound * days * calibration);
+    const predictedUpper = Math.max(0, preds.upperBound * days * calibration);
     return {
       ...row,
       '预测采集量': Math.round(predictedTotal),
