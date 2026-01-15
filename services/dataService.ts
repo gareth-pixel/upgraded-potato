@@ -99,7 +99,7 @@ export const trainFromData = async (
   // Small delay to allow UI render
   await new Promise(resolve => setTimeout(resolve, 50));
 
-  const modelData = addDerivedFeatures(data);
+  const modelData = addDerivedFeatures(data).map(addDailyTarget);
   const { trees } = await trainRandomForest(modelData);
   
   // Evaluate
@@ -182,11 +182,15 @@ export const handlePredict = async (
   const results = data.map(row => {
     const rowWithDerived = addDerivedFeaturesToRow(row);
     const preds = predictForest(modelData.trees, rowWithDerived);
+    const days = getSafeDays(row);
+    const predictedTotal = preds.mean * days;
+    const predictedLower = preds.lowerBound * days;
+    const predictedUpper = preds.upperBound * days;
     return {
       ...row,
-      '预测采集量': Math.round(preds.mean),
-      '预测下限': Math.round(preds.lowerBound),
-      '预测上限': Math.round(preds.upperBound)
+      '预测采集量': Math.round(predictedTotal),
+      '预测下限': Math.round(predictedLower),
+      '预测上限': Math.round(predictedUpper)
     };
   });
 
@@ -301,19 +305,36 @@ const readFile = (file: File): Promise<DataRow[]> => {
   });
 };
 
-const addDerivedFeaturesToRow = (row: DataRow): DataRow => {
+const getSafeDays = (row: DataRow) => {
   const days = Number(row['采集天数']);
-  const safeDays = Number.isFinite(days) && days > 0 ? days : 1;
+  return Number.isFinite(days) && days > 0 ? days : 1;
+};
+
+const addDerivedFeaturesToRow = (row: DataRow): DataRow => {
+  const safeDays = getSafeDays(row);
+  const logDays = Math.log1p(safeDays);
 
   return {
     ...row,
     '笔记数/天': Number(row['笔记数']) / safeDays,
     '点赞数/天': Number(row['点赞数']) / safeDays,
     '收藏数/天': Number(row['收藏数']) / safeDays,
-    '评论数/天': Number(row['评论数']) / safeDays
+    '评论数/天': Number(row['评论数']) / safeDays,
+    '采集天数^2': safeDays * safeDays,
+    '采集天数_log': logDays,
+    '采集天数_缩放': safeDays / 180
   };
 };
 
 const addDerivedFeatures = (data: DataRow[]): DataRow[] => {
   return data.map(addDerivedFeaturesToRow);
+};
+
+const addDailyTarget = (row: DataRow): DataRow => {
+  const safeDays = getSafeDays(row);
+  const total = Number(row[TARGET]);
+  return {
+    ...row,
+    [TARGET]: total / safeDays
+  };
 };
