@@ -188,12 +188,12 @@ const buildRateLimitError = (res: Response, token?: string) => {
   const resetTime = reset ? new Date(Number(reset) * 1000).toLocaleString() : null;
 
   if (!token) {
-    return 'GitHub API rate limit exceeded for anonymous requests. Please add a Personal Access Token in settings.';
+    return 'GitHub API 匿名请求已触发限流，请在设置中填写 Personal Access Token (PAT)。';
   }
 
   if (remaining === '0') {
-    return `GitHub API rate limit exceeded. Limit: ${limit ?? 'unknown'}, resets at: ${resetTime ?? 'unknown time'}.`;
+    return `GitHub API 触发限流。限额: ${limit ?? '未知'}，重置时间: ${resetTime ?? '未知时间'}。`;
   }
 
-  return 'GitHub API access denied. Please check your Personal Access Token scopes and repository permissions.';
+  return 'GitHub API 访问被拒绝，请检查 Personal Access Token 权限范围与仓库权限。';
 };
