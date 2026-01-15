@@ -21,21 +21,13 @@ export interface PredictionResult {
   upperBound: number; // 90%
 }
 
-export interface RandomForestModel {
+export interface LinearModel {
   type: ModelType;
-  trees: DecisionTreeNode[];
+  weights: number[];
+  bias: number;
   metrics: TrainingMetrics;
+  residualStd: number;
   calibrationFactor?: number;
-}
-
-// Minimal structure for a decision tree node
-export interface DecisionTreeNode {
-  isLeaf: boolean;
-  value?: number; // For leaf
-  feature?: string;
-  threshold?: number;
-  left?: DecisionTreeNode;
-  right?: DecisionTreeNode;
 }
 
 export const FEATURES = [

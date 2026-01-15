@@ -1,8 +1,8 @@
 
 import * as XLSX from 'xlsx';
-import { DataRow, ModelType, TrainingMetrics, RandomForestModel, FEATURES, TARGET } from '../types';
+import { DataRow, ModelType, TrainingMetrics, LinearModel, FEATURES, TARGET } from '../types';
 import { STORAGE_KEYS, MODEL_CONFIGS } from '../constants';
-import { trainRandomForest, predictForest, calculateR2, calculateMAE } from './mlEngine';
+import { trainLinearModel, predictLinearModel, calculateR2, calculateMAE } from './mlEngine';
 import { dbService } from './db';
 
 // --- Validation ---
@@ -100,12 +100,12 @@ export const trainFromData = async (
   await new Promise(resolve => setTimeout(resolve, 50));
 
   const modelData = data.map(addDailyTarget);
-  const { trees } = await trainRandomForest(modelData);
+  const { weights, bias, residualStd } = await trainLinearModel(modelData);
   
   // Evaluate
   onProgress?.("正在评估模型...");
   const yTrue = modelData.map(r => Number(r[TARGET]));
-  const predictions = modelData.map(r => predictForest(trees, r).mean);
+  const predictions = modelData.map(r => predictLinearModel(weights, bias, residualStd, r).mean);
 
   const r2 = calculateR2(yTrue, predictions);
   const mae = calculateMAE(yTrue, predictions);
@@ -124,10 +124,12 @@ export const trainFromData = async (
     lastUpdated: new Date().toLocaleString()
   };
 
-  const modelPayload: RandomForestModel = {
+  const modelPayload: LinearModel = {
     type: modelType,
-    trees,
+    weights,
+    bias,
     metrics,
+    residualStd,
     calibrationFactor
   };
 
@@ -172,8 +174,11 @@ export const handlePredict = async (
 ): Promise<DataRow[]> => {
   // 1. Load Model from IndexedDB
   onProgress("正在加载模型...");
-  const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType)) as RandomForestModel;
+  const modelData = await dbService.getModel(STORAGE_KEYS.MODEL(modelType)) as LinearModel;
   if (!modelData) throw new Error("该模型尚未训练，请先训练模型。");
+  if (!Array.isArray(modelData.weights)) {
+    throw new Error("本地模型版本不兼容，请重新训练模型。");
+  }
 
   // 2. Read File
   onProgress("读取预测文件...");
@@ -188,7 +193,7 @@ export const handlePredict = async (
   await new Promise(resolve => setTimeout(resolve, 500));
 
   const results = data.map(row => {
-    const preds = predictForest(modelData.trees, row);
+    const preds = predictLinearModel(modelData.weights, modelData.bias, modelData.residualStd, row);
     const days = getSafeDays(row);
     const calibration = modelData.calibrationFactor ?? 1;
     const predictedTotal = preds.mean * days * calibration;
@@ -260,7 +265,7 @@ export const restoreModelFromRemote = async (
 
   onProgress("正在解析云端数据...");
   
-  let model: RandomForestModel | null = null;
+  let model: LinearModel | null = null;
   let data: DataRow[] = [];
 
   // Check structure
@@ -268,10 +273,9 @@ export const restoreModelFromRemote = async (
     // New format
     model = targetData.model;
     data = targetData.data || [];
-  } else if (targetData.trees) {
+  } else if (targetData.weights) {
     // Old format (only model)
     model = targetData;
-    // No data in old format
   }
 
   // 1. Save Data

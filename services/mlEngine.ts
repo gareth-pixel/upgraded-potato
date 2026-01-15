@@ -1,10 +1,7 @@
-import { DataRow, DecisionTreeNode, MODEL_FEATURES, TARGET } from '../types';
+import { DataRow, MODEL_FEATURES, TARGET } from '../types';
 
-// Constants for RF
-const N_ESTIMATORS = 200;
-const MIN_SAMPLES_SPLIT = 5;
-const MAX_DEPTH = 15;
-const MAX_FEATURES_RATIO = 0.7; // Use 70% of features for split consideration
+const RIDGE_LAMBDA = 1;
+const Z_SCORE_80 = 1.2816;
 
 /**
  * Calculates Mean Absolute Error
@@ -34,138 +31,100 @@ export const calculateR2 = (yTrue: number[], yPred: number[]): number => {
   return 1 - (ssRes / ssTot);
 };
 
-// --- Random Forest Implementation ---
-
-/**
- * Bootstrapping: Sample with replacement
- */
-const bootstrapSample = (data: DataRow[]): DataRow[] => {
-  const n = data.length;
-  const sample: DataRow[] = [];
-  for (let i = 0; i < n; i++) {
-    const idx = Math.floor(Math.random() * n);
-    sample.push(data[idx]);
-  }
-  return sample;
+const buildFeatureRow = (row: DataRow): number[] => {
+  return MODEL_FEATURES.map(feature => Number(row[feature] ?? 0));
 };
 
-/**
- * Build a Decision Tree
- */
-const buildTree = (data: DataRow[], depth: number): DecisionTreeNode => {
-  const yValues = data.map(r => Number(r[TARGET]));
-  const meanVal = yValues.reduce((a, b) => a + b, 0) / yValues.length;
+const transpose = (matrix: number[][]) => matrix[0].map((_, i) => matrix.map(row => row[i]));
 
-  // Stopping criteria
-  if (depth >= MAX_DEPTH || data.length < MIN_SAMPLES_SPLIT || new Set(yValues).size === 1) {
-    return { isLeaf: true, value: meanVal };
-  }
-
-  let bestSplit = { feature: '', threshold: 0, varianceReduction: -Infinity, left: [] as DataRow[], right: [] as DataRow[] };
-  
-  // Random subset of features
-  const features = [...MODEL_FEATURES].sort(() => 0.5 - Math.random()).slice(0, Math.ceil(MODEL_FEATURES.length * MAX_FEATURES_RATIO));
-
-  const currentVariance = calculateVariance(yValues);
-
-  for (const feature of features) {
-    // Get unique values to test as thresholds
-    const values = Array.from(new Set(data.map(d => Number(d[feature]))));
-    // Optimization: Don't test every single value if there are too many, just sample some
-    const testValues = values.length > 20 ? values.sort(() => 0.5 - Math.random()).slice(0, 20) : values;
-
-    for (const threshold of testValues) {
-      const left = [];
-      const right = [];
-      for (const row of data) {
-        if (Number(row[feature]) <= threshold) left.push(row);
-        else right.push(row);
+const multiply = (a: number[][], b: number[][]) => {
+  const result = Array.from({ length: a.length }, () => Array(b[0].length).fill(0));
+  for (let i = 0; i < a.length; i++) {
+    for (let k = 0; k < b.length; k++) {
+      for (let j = 0; j < b[0].length; j++) {
+        result[i][j] += a[i][k] * b[k][j];
       }
+    }
+  }
+  return result;
+};
 
-      if (left.length === 0 || right.length === 0) continue;
+const multiplyVec = (a: number[][], v: number[]) => {
+  return a.map(row => row.reduce((sum, value, idx) => sum + value * v[idx], 0));
+};
 
-      const varLeft = calculateVariance(left.map(r => Number(r[TARGET])));
-      const varRight = calculateVariance(right.map(r => Number(r[TARGET])));
-      
-      const reduction = currentVariance - ((left.length / data.length) * varLeft + (right.length / data.length) * varRight);
+const identity = (size: number) => {
+  const matrix = Array.from({ length: size }, () => Array(size).fill(0));
+  for (let i = 0; i < size; i++) matrix[i][i] = 1;
+  return matrix;
+};
 
-      if (reduction > bestSplit.varianceReduction) {
-        bestSplit = { feature, threshold, varianceReduction: reduction, left, right };
+const invert = (matrix: number[][]) => {
+  const size = matrix.length;
+  const aug = matrix.map((row, i) => [...row, ...identity(size)[i]]);
+
+  for (let i = 0; i < size; i++) {
+    let pivot = aug[i][i];
+    if (pivot === 0) {
+      for (let j = i + 1; j < size; j++) {
+        if (aug[j][i] !== 0) {
+          [aug[i], aug[j]] = [aug[j], aug[i]];
+          pivot = aug[i][i];
+          break;
+        }
+      }
+    }
+
+    const scale = pivot === 0 ? 1 : pivot;
+    for (let j = 0; j < 2 * size; j++) {
+      aug[i][j] /= scale;
+    }
+
+    for (let k = 0; k < size; k++) {
+      if (k === i) continue;
+      const factor = aug[k][i];
+      for (let j = 0; j < 2 * size; j++) {
+        aug[k][j] -= factor * aug[i][j];
       }
     }
   }
 
-  if (bestSplit.varianceReduction === -Infinity) {
-    return { isLeaf: true, value: meanVal };
+  return aug.map(row => row.slice(size));
+};
+
+export const trainLinearModel = async (data: DataRow[]) => {
+  const x = data.map(buildFeatureRow);
+  const y = data.map(row => Number(row[TARGET] ?? 0));
+
+  const meanY = y.reduce((sum, value) => sum + value, 0) / y.length;
+  const centeredY = y.map(value => value - meanY);
+
+  const xt = transpose(x);
+  const xtx = multiply(xt, x);
+  for (let i = 0; i < xtx.length; i++) {
+    xtx[i][i] += RIDGE_LAMBDA;
   }
+  const xtxInv = invert(xtx);
+  const weights = multiplyVec(xtxInv, multiplyVec(xt, centeredY));
+
+  const predictions = x.map(row => row.reduce((sum, value, idx) => sum + value * weights[idx], 0) + meanY);
+  const residuals = predictions.map((pred, idx) => y[idx] - pred);
+  const residualStd = Math.sqrt(residuals.reduce((sum, value) => sum + value * value, 0) / Math.max(1, residuals.length - 1));
 
   return {
-    isLeaf: false,
-    feature: bestSplit.feature,
-    threshold: bestSplit.threshold,
-    left: buildTree(bestSplit.left, depth + 1),
-    right: buildTree(bestSplit.right, depth + 1)
+    weights,
+    bias: meanY,
+    residualStd
   };
 };
 
-const calculateVariance = (values: number[]): number => {
-  if (values.length === 0) return 0;
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  return values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-};
-
-const predictTree = (node: DecisionTreeNode, row: DataRow): number => {
-  if (node.isLeaf) return node.value!;
-  const val = Number(row[node.feature!]);
-  if (val <= node.threshold!) {
-    return predictTree(node.left!, row);
-  } else {
-    return predictTree(node.right!, row);
-  }
-};
-
-/**
- * Main Training Function (Async to not freeze UI)
- */
-export const trainRandomForest = async (data: DataRow[]): Promise<{ trees: DecisionTreeNode[], oobPreds: number[] }> => {
-  const trees: DecisionTreeNode[] = [];
-  
-  // Since we are in browser, we chunk the work
-  const chunkSize = 10;
-  
-  for (let i = 0; i < N_ESTIMATORS; i += chunkSize) {
-    // Allow UI to breathe
-    await new Promise(resolve => setTimeout(resolve, 0)); 
-    
-    for (let j = 0; j < chunkSize && (i + j) < N_ESTIMATORS; j++) {
-      const sample = bootstrapSample(data);
-      trees.push(buildTree(sample, 0));
-    }
-  }
-
-  // Calculate OOB-like predictions (simplified: just predict on training data for metrics)
-  // Real OOB is better but for this simple app, training error is okay as a proxy if explicit test set isn't provided.
-  // Actually, standard R2 for RF is usually on the training set or OOB. We will return training set predictions to calculate metrics.
-  
-  return { trees, oobPreds: [] };
-};
-
-export const predictForest = (trees: DecisionTreeNode[], row: DataRow) => {
-  const predictions = trees.map(tree => predictTree(tree, row));
-  
-  // Sort for quantiles
-  predictions.sort((a, b) => a - b);
-  
-  const n = predictions.length;
-  const mean = predictions.reduce((a, b) => a + b, 0) / n;
-  
-  // 10th and 90th percentile
-  const idx10 = Math.floor(n * 0.1);
-  const idx90 = Math.floor(n * 0.9);
-  
-  // Guard against small tree counts (though we use 200)
-  const lowerBound = predictions[Math.max(0, idx10)];
-  const upperBound = predictions[Math.min(n - 1, idx90)];
-
-  return { mean, lowerBound, upperBound };
+export const predictLinearModel = (weights: number[], bias: number, residualStd: number, row: DataRow) => {
+  const features = buildFeatureRow(row);
+  const mean = features.reduce((sum, value, idx) => sum + value * weights[idx], 0) + bias;
+  const range = residualStd * Z_SCORE_80;
+  return {
+    mean,
+    lowerBound: mean - range,
+    upperBound: mean + range
+  };
 };
