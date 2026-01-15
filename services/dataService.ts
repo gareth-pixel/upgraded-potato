@@ -106,9 +106,16 @@ export const trainFromData = async (
   onProgress?.("正在评估模型...");
   const yTrue = modelData.map(r => Number(r[TARGET]));
   const predictions = modelData.map(r => predictForest(trees, r).mean);
-  
+
   const r2 = calculateR2(yTrue, predictions);
   const mae = calculateMAE(yTrue, predictions);
+
+  const totalActual = data.reduce((sum, row) => sum + Number(row[TARGET] ?? 0), 0);
+  const totalPredicted = modelData.reduce((sum, row, index) => {
+    const days = getSafeDays(row);
+    return sum + predictions[index] * days;
+  }, 0);
+  const calibrationFactor = totalPredicted > 0 ? totalActual / totalPredicted : 1;
   
   const metrics: TrainingMetrics = {
     r2,
@@ -120,7 +127,8 @@ export const trainFromData = async (
   const modelPayload: RandomForestModel = {
     type: modelType,
     trees,
-    metrics
+    metrics,
+    calibrationFactor
   };
 
   // Save to IndexedDB
@@ -183,9 +191,10 @@ export const handlePredict = async (
     const rowWithDerived = addDerivedFeaturesToRow(row);
     const preds = predictForest(modelData.trees, rowWithDerived);
     const days = getSafeDays(row);
-    const predictedTotal = preds.mean * days;
-    const predictedLower = preds.lowerBound * days;
-    const predictedUpper = preds.upperBound * days;
+    const calibration = modelData.calibrationFactor ?? 1;
+    const predictedTotal = preds.mean * days * calibration;
+    const predictedLower = preds.lowerBound * days * calibration;
+    const predictedUpper = preds.upperBound * days * calibration;
     return {
       ...row,
       '预测采集量': Math.round(predictedTotal),

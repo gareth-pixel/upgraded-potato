@@ -25,6 +25,7 @@ export interface RandomForestModel {
   type: ModelType;
   trees: DecisionTreeNode[];
   metrics: TrainingMetrics;
+  calibrationFactor?: number;
 }
 
 // Minimal structure for a decision tree node
