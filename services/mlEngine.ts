@@ -1,4 +1,4 @@
-import { DataRow, DecisionTreeNode, FEATURES, TARGET } from '../types';
+import { DataRow, DecisionTreeNode, MODEL_FEATURES, TARGET } from '../types';
 
 // Constants for RF
 const N_ESTIMATORS = 200;
@@ -64,7 +64,7 @@ const buildTree = (data: DataRow[], depth: number): DecisionTreeNode => {
   let bestSplit = { feature: '', threshold: 0, varianceReduction: -Infinity, left: [] as DataRow[], right: [] as DataRow[] };
   
   // Random subset of features
-  const features = [...FEATURES].sort(() => 0.5 - Math.random()).slice(0, Math.ceil(FEATURES.length * MAX_FEATURES_RATIO));
+  const features = [...MODEL_FEATURES].sort(() => 0.5 - Math.random()).slice(0, Math.ceil(MODEL_FEATURES.length * MAX_FEATURES_RATIO));
 
   const currentVariance = calculateVariance(yValues);
 

@@ -46,3 +46,15 @@ export const FEATURES = [
 ];
 
 export const TARGET = '采集量';
+
+export const DERIVED_FEATURES = [
+  '笔记数/天',
+  '点赞数/天',
+  '收藏数/天',
+  '评论数/天'
+];
+
+export const MODEL_FEATURES = [
+  ...FEATURES,
+  ...DERIVED_FEATURES
+];

@@ -98,13 +98,14 @@ export const trainFromData = async (
   onProgress?.(`正在训练 (样本量: ${data.length}, 树: 200)...`);
   // Small delay to allow UI render
   await new Promise(resolve => setTimeout(resolve, 50));
-  
-  const { trees } = await trainRandomForest(data);
+
+  const modelData = addDerivedFeatures(data);
+  const { trees } = await trainRandomForest(modelData);
   
   // Evaluate
   onProgress?.("正在评估模型...");
-  const yTrue = data.map(r => Number(r[TARGET]));
-  const predictions = data.map(r => predictForest(trees, r).mean);
+  const yTrue = modelData.map(r => Number(r[TARGET]));
+  const predictions = modelData.map(r => predictForest(trees, r).mean);
   
   const r2 = calculateR2(yTrue, predictions);
   const mae = calculateMAE(yTrue, predictions);
@@ -179,7 +180,8 @@ export const handlePredict = async (
   await new Promise(resolve => setTimeout(resolve, 500));
 
   const results = data.map(row => {
-    const preds = predictForest(modelData.trees, row);
+    const rowWithDerived = addDerivedFeaturesToRow(row);
+    const preds = predictForest(modelData.trees, rowWithDerived);
     return {
       ...row,
       '预测采集量': Math.round(preds.mean),
@@ -297,4 +299,21 @@ const readFile = (file: File): Promise<DataRow[]> => {
     reader.onerror = (err) => reject(err);
     reader.readAsBinaryString(file);
   });
+};
+
+const addDerivedFeaturesToRow = (row: DataRow): DataRow => {
+  const days = Number(row['采集天数']);
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 1;
+
+  return {
+    ...row,
+    '笔记数/天': Number(row['笔记数']) / safeDays,
+    '点赞数/天': Number(row['点赞数']) / safeDays,
+    '收藏数/天': Number(row['收藏数']) / safeDays,
+    '评论数/天': Number(row['评论数']) / safeDays
+  };
+};
+
+const addDerivedFeatures = (data: DataRow[]): DataRow[] => {
+  return data.map(addDerivedFeaturesToRow);
 };
