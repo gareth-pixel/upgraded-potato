@@ -41,7 +41,12 @@ export const fetchFromGitHub = async (config: GitHubConfig) => {
     headers['Authorization'] = `token ${token}`;
   }
 
-  const res = await fetch(url, { headers });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers });
+  } catch (error: any) {
+    throw new Error(buildNetworkError(error));
+  }
   
   if (!res.ok) {
     if (res.status === 404) return null; // File doesn't exist
@@ -91,7 +96,12 @@ export const uploadToGitHub = async (
     let sha: string | undefined;
     let existingContent: any = {};
 
-    const getRes = await fetch(metaUrl, { headers: metaHeaders });
+    let getRes: Response;
+    try {
+      getRes = await fetch(metaUrl, { headers: metaHeaders });
+    } catch (error: any) {
+      throw new Error(buildNetworkError(error));
+    }
     
     if (getRes.status === 200) {
       const data = await getRes.json();
@@ -103,12 +113,17 @@ export const uploadToGitHub = async (
       // with an empty object if the fetch fails.
       
       const rawUrl = `${baseUrl}?t=${new Date().getTime()}`; // Cache bust raw content
-      const rawRes = await fetch(rawUrl, {
-        headers: {
-          'Authorization': `token ${token}`,
-          'Accept': 'application/vnd.github.v3.raw'
-        }
-      });
+      let rawRes: Response;
+      try {
+        rawRes = await fetch(rawUrl, {
+          headers: {
+            'Authorization': `token ${token}`,
+            'Accept': 'application/vnd.github.v3.raw'
+          }
+        });
+      } catch (error: any) {
+        throw new Error(buildNetworkError(error));
+      }
       
       if (!rawRes.ok) {
         // ABORT: Cannot read existing file
@@ -157,15 +172,20 @@ export const uploadToGitHub = async (
       sha, // Required if updating existing file
     };
 
-    const putRes = await fetch(baseUrl, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `token ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(putBody),
-    });
+    let putRes: Response;
+    try {
+      putRes = await fetch(baseUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(putBody),
+      });
+    } catch (error: any) {
+      throw new Error(buildNetworkError(error));
+    }
 
     if (!putRes.ok) {
       if (putRes.status === 403) {
@@ -196,4 +216,12 @@ const buildRateLimitError = (res: Response, token?: string) => {
   }
 
   return 'GitHub API 访问被拒绝，请检查 Personal Access Token 权限范围与仓库权限。';
+};
+
+const buildNetworkError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'Failed to fetch') {
+    return '网络请求失败：无法连接 GitHub API。请检查网络、代理/VPN 或浏览器的跨域/拦截设置。';
+  }
+  return `网络请求失败：${message}`;
 };
