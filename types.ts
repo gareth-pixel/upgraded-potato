@@ -48,21 +48,9 @@ export const FEATURES = [
 
 export const TARGET = '采集量';
 
-export const DAY_FEATURES = [
-  '采集天数^2',
-  '采集天数_log',
-  '采集天数_缩放'
-];
-
-export const DERIVED_FEATURES = [
-  '笔记数/天',
-  '点赞数/天',
-  '收藏数/天',
-  '评论数/天'
-];
-
 export const MODEL_FEATURES = [
-  ...FEATURES,
-  ...DAY_FEATURES,
-  ...DERIVED_FEATURES
+  '笔记数',
+  '点赞数',
+  '收藏数',
+  '评论数'
 ];

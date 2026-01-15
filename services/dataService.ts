@@ -99,7 +99,7 @@ export const trainFromData = async (
   // Small delay to allow UI render
   await new Promise(resolve => setTimeout(resolve, 50));
 
-  const modelData = addDerivedFeatures(data).map(addDailyTarget);
+  const modelData = data.map(addDailyTarget);
   const { trees } = await trainRandomForest(modelData);
   
   // Evaluate
@@ -188,8 +188,7 @@ export const handlePredict = async (
   await new Promise(resolve => setTimeout(resolve, 500));
 
   const results = data.map(row => {
-    const rowWithDerived = addDerivedFeaturesToRow(row);
-    const preds = predictForest(modelData.trees, rowWithDerived);
+    const preds = predictForest(modelData.trees, row);
     const days = getSafeDays(row);
     const calibration = modelData.calibrationFactor ?? 1;
     const predictedTotal = preds.mean * days * calibration;
@@ -317,26 +316,6 @@ const readFile = (file: File): Promise<DataRow[]> => {
 const getSafeDays = (row: DataRow) => {
   const days = Number(row['采集天数']);
   return Number.isFinite(days) && days > 0 ? days : 1;
-};
-
-const addDerivedFeaturesToRow = (row: DataRow): DataRow => {
-  const safeDays = getSafeDays(row);
-  const logDays = Math.log1p(safeDays);
-
-  return {
-    ...row,
-    '笔记数/天': Number(row['笔记数']) / safeDays,
-    '点赞数/天': Number(row['点赞数']) / safeDays,
-    '收藏数/天': Number(row['收藏数']) / safeDays,
-    '评论数/天': Number(row['评论数']) / safeDays,
-    '采集天数^2': safeDays * safeDays,
-    '采集天数_log': logDays,
-    '采集天数_缩放': safeDays / 180
-  };
-};
-
-const addDerivedFeatures = (data: DataRow[]): DataRow[] => {
-  return data.map(addDerivedFeaturesToRow);
 };
 
 const addDailyTarget = (row: DataRow): DataRow => {
