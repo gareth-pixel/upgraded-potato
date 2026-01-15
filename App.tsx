@@ -214,6 +214,7 @@ const App: React.FC = () => {
             <div>
               <h1 className="text-xl font-bold text-gray-900 tracking-tight">采集量预测系统</h1>
               <p className="text-xs text-gray-500">Collection Volume Prediction System</p>
+              <p className="text-xs text-amber-600 mt-1">注：数据为预测的曝光数据</p>
             </div>
           </div>
           <button 
