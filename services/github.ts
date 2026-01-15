@@ -45,7 +45,9 @@ export const fetchFromGitHub = async (config: GitHubConfig) => {
   
   if (!res.ok) {
     if (res.status === 404) return null; // File doesn't exist
-    if (res.status === 403) throw new Error("GitHub API rate limit exceeded or access denied. Check your token.");
+    if (res.status === 403) {
+      throw new Error(buildRateLimitError(res, token));
+    }
     throw new Error(`GitHub Fetch Error: ${res.status} ${res.statusText}`);
   }
   
@@ -132,7 +134,7 @@ export const uploadToGitHub = async (
       // File doesn't exist yet, safe to create new
       existingContent = {};
     } else if (getRes.status === 403) {
-      throw new Error("GitHub API permission denied. Check your token scopes.");
+      throw new Error(buildRateLimitError(getRes, token));
     } else {
       throw new Error(`GitHub API Error (Get Metadata): ${getRes.statusText}`);
     }
@@ -166,6 +168,9 @@ export const uploadToGitHub = async (
     });
 
     if (!putRes.ok) {
+      if (putRes.status === 403) {
+        throw new Error(buildRateLimitError(putRes, token));
+      }
       const errData = await putRes.json();
       throw new Error(`GitHub API Error (Put): ${errData.message || putRes.statusText}`);
     }
@@ -174,4 +179,21 @@ export const uploadToGitHub = async (
   } catch (error: any) {
     throw new Error(`GitHub Sync Failed: ${error.message}`);
   }
+};
+
+const buildRateLimitError = (res: Response, token?: string) => {
+  const limit = res.headers.get('x-ratelimit-limit');
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  const reset = res.headers.get('x-ratelimit-reset');
+  const resetTime = reset ? new Date(Number(reset) * 1000).toLocaleString() : null;
+
+  if (!token) {
+    return 'GitHub API rate limit exceeded for anonymous requests. Please add a Personal Access Token in settings.';
+  }
+
+  if (remaining === '0') {
+    return `GitHub API rate limit exceeded. Limit: ${limit ?? 'unknown'}, resets at: ${resetTime ?? 'unknown time'}.`;
+  }
+
+  return 'GitHub API access denied. Please check your Personal Access Token scopes and repository permissions.';
 };
